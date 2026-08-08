@@ -34,17 +34,20 @@ jobs:
     steps:
     - name: Checkout source code
       uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
 
     - name: Build kernelsu.ko
       env:
         EXPECTED_SIZE2: ${{ inputs.expected_size2 }}
         EXPECTED_HASH2: ${{ inputs.expected_hash2 }}
       run: |
-        git config --global --add safe.directory /__w/KernelSU/KernelSU
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        KSU_GIT_VERSION=$(git -C "$GITHUB_WORKSPACE" rev-list --count HEAD 2>/dev/null || echo 0)
 
         cd kernel
 
-        echo "=== Building kernelsu.ko for KMI: ${{ inputs.kmi }} ==="
+        echo "=== Building kernelsu.ko for KMI: ${{ inputs.kmi }} (KSU_GIT_VERSION=$KSU_GIT_VERSION) ==="
 
         EXTRA_ARGS=""
         if [ -n "$EXPECTED_SIZE2" ] && [ -z "$EXPECTED_HASH2" ]; then
@@ -58,7 +61,7 @@ jobs:
         if [ -n "$EXPECTED_SIZE2" ]; then
           EXTRA_ARGS="KSU_EXPECTED_SIZE2=$EXPECTED_SIZE2 KSU_EXPECTED_HASH2=$EXPECTED_HASH2"
         fi
-        CONFIG_KSU=m CC=clang make $EXTRA_ARGS
+        CONFIG_KSU=m CC=clang make KSU_GIT_VERSION_VALID=1 KSU_GIT_VERSION=$KSU_GIT_VERSION $EXTRA_ARGS
         
         echo "=== Build completed ==="
 
@@ -89,6 +92,9 @@ jobs:
       run: |
         cd kernel
         make clean
+
+        KSU_GIT_VERSION=$(git -C "$GITHUB_WORKSPACE" rev-list --count HEAD 2>/dev/null || echo 0)
+        echo "KSU_GIT_VERSION=$KSU_GIT_VERSION"
 
         echo "=== Preparing KDIR for x64 ==="
 
@@ -128,7 +134,7 @@ jobs:
         
         MDIR=$(realpath .)
 
-        make -C $KDIR M=$MDIR compile_commands.json modules CONFIG_KSU=m CONFIG_KSU_X86_PATCH_SYSCALL_DISPATCHER=y $EXTRA_ARGS
+        make -C $KDIR M=$MDIR compile_commands.json modules CONFIG_KSU=m CONFIG_KSU_X86_PATCH_SYSCALL_DISPATCHER=y KSU_GIT_VERSION_VALID=1 KSU_GIT_VERSION=$KSU_GIT_VERSION $EXTRA_ARGS
         
         echo "=== Build completed ==="
 
