@@ -944,8 +944,10 @@ struct selinux_policy *ksu_dup_sepolicy(struct selinux_policy *old_pol)
     // part of the on-disk config), so forcing them made the reloaded policy
     // enable the Android netlink-route netif egress check while the matching
     // rules were absent, breaking networking under enforcing. Keep the config
-    // exactly as serialized (matching the original policy).
-
+    // exactly as serialized (matching the original policy). This also covers
+    // the 6.18+ behavior where the platform policy uses the upstream extended
+    // permission "nlmsg" instead (upstream guarded the fixup with
+    // LINUX_VERSION_CODE < 6.18; we drop it entirely since it is harmful).
     new_pol = kmemdup(old_pol, sizeof(*old_pol), GFP_KERNEL);
     if (!new_pol) {
         ret = -ENOMEM;
