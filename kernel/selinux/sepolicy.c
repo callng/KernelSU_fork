@@ -16,11 +16,6 @@
 
 #define KSU_SUPPORT_ADD_TYPE
 
-// Slack for serializing the policydb in ksu_dup_sepolicy: policydb_write can
-// emit more bytes than the original binary (policydb.len), e.g. after a policy
-// reload, and the fixed-size buffer then failed with -EINVAL.
-#define KSU_SEPOLICY_WRITE_SLACK (8 * 1024 * 1024)
-
 //////////////////////////////////////////////////////
 // Declaration
 //////////////////////////////////////////////////////
@@ -909,45 +904,51 @@ struct selinux_policy *ksu_dup_sepolicy(struct selinux_policy *old_pol)
 {
     int ret;
     size_t len;
-    size_t alloc_len;
-    size_t written;
     struct selinux_policy *new_pol;
     void *data;
     struct policy_file fp;
 
-    len = old_pol->policydb.len;
-    // policydb_write can serialize the policy to a larger size than the
-    // original binary (e.g. after a policy reload via load_policy). Relying
-    // on policydb.len made put_entry fail with -EINVAL and silently disabled
-    // all runtime sepolicy patches. Allocate with a generous slack instead.
-    alloc_len = len + KSU_SEPOLICY_WRITE_SLACK;
-    data = vmalloc(alloc_len);
+    // Some device policy db seems not marking type itself in type_attr_map_array
+    // policydb_read() adds each type to its own attribute map, so old_pol->policydb.len may be smaller
+    // preserve one ebitmap entry for this condition to avoid trigger -EINVAL
+    len = old_pol->policydb.len + (size_t)old_pol->policydb.p_types.nprim * (sizeof(u32) + sizeof(u64));
+
+    data = vmalloc(len);
     if (!data) {
-        pr_err("alloc policy len %ld\n", alloc_len);
+        pr_err("alloc policy buffer len %zu\n", len);
         ret = -ENOMEM;
         goto out_free_data;
     }
 
     fp.data = data;
-    fp.len = alloc_len;
+    fp.len = len;
 
     ret = policydb_write(&old_pol->policydb, &fp);
     if (ret) {
         pr_err("sepolicy: policydb_write: %d\n", ret);
         goto out_free_data;
     }
-    written = alloc_len - fp.len;
-    pr_info("sepolicy: policydb serialized %zu -> %zu bytes\n", len, written);
-
-    // NOTE: The upstream code force-set POLICYDB_CONFIG_ANDROID_NETLINK_ROUTE/
-    // GETNEIGH here, but policydb_write never emits those bits (they are not
-    // part of the on-disk config), so forcing them made the reloaded policy
-    // enable the Android netlink-route netif egress check while the matching
-    // rules were absent, breaking networking under enforcing. Keep the config
-    // exactly as serialized (matching the original policy). This also covers
-    // the 6.18+ behavior where the platform policy uses the upstream extended
-    // permission "nlmsg" instead (upstream guarded the fixup with
-    // LINUX_VERSION_CODE < 6.18; we drop it entirely since it is harmful).
+    len -= fp.len;
+    // https://android.googlesource.com/kernel/common/+/35a7845718734ae638b85b420534cb859498dab6%5E%21
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 18, 0)
+    // https://android-review.googlesource.com/c/kernel/common/+/3009995/11/security/selinux/ss/policydb.c
+    // fixup config
+    // 4*2+8+4
+    static const size_t kConfigOff = 20;
+    if (len >= kConfigOff + sizeof(u32)) {
+        u32 *config_ptr = (u32 *)((unsigned long)data + kConfigOff);
+        pr_info("old config: %u\n", *config_ptr);
+        if (old_pol->policydb.android_netlink_route) {
+            pr_info("adding POLICYDB_CONFIG_ANDROID_NETLINK_ROUTE\n");
+            *config_ptr |= POLICYDB_CONFIG_ANDROID_NETLINK_ROUTE;
+        }
+        if (old_pol->policydb.android_netlink_getneigh) {
+            pr_info("adding POLICYDB_CONFIG_ANDROID_NETLINK_GETNEIGH\n");
+            *config_ptr |= POLICYDB_CONFIG_ANDROID_NETLINK_GETNEIGH;
+        }
+        pr_info("new config: %u\n", *config_ptr);
+    }
+#endif
     new_pol = kmemdup(old_pol, sizeof(*old_pol), GFP_KERNEL);
     if (!new_pol) {
         ret = -ENOMEM;
@@ -956,16 +957,16 @@ struct selinux_policy *ksu_dup_sepolicy(struct selinux_policy *old_pol)
     }
     memset(&new_pol->policydb, 0, sizeof(new_pol->policydb));
 
-    // rewind fp to the actual serialized size
+    // rewind fp
     fp.data = data;
-    fp.len = written;
+    fp.len = len;
 
     ret = policydb_read(&new_pol->policydb, &fp);
     if (ret) {
         pr_err("sepolicy: policydb_read: %d\n", ret);
         goto out_free_policydb;
     }
-    new_pol->policydb.len = written;
+    new_pol->policydb.len = len;
     kvfree(data);
 
     return new_pol;
