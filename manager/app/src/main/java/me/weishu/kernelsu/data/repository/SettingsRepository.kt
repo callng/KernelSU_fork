@@ -22,7 +22,8 @@ interface SettingsRepository {
     var enableWebDebugging: Boolean
     var moduleSortEnabledFirst: Boolean
     var moduleSortActionFirst: Boolean
-    var moduleRepoSortOrder: Int
+    /** Name of the [me.weishu.kernelsu.ui.screen.modulerepo.RepoSort] entry. */
+    var moduleRepoSortOrder: String
     var superuserShowSystemApps: Boolean
     var superuserShowOnlyPrimaryUserApps: Boolean
     var superuserSortOption: Int
@@ -48,10 +49,12 @@ interface SettingsRepository {
 
     suspend fun getSulogStatus(): String
     suspend fun getSulogPersistValue(): Long?
+    suspend fun getSulogValue(): Long?
     fun setSulogEnabled(enabled: Boolean): Boolean
 
     suspend fun getAdbRootStatus(): String
     suspend fun getAdbRootPersistValue(): Long?
+    suspend fun getAdbRootValue(): Long?
     fun setAdbRootEnabled(enabled: Boolean): Boolean
 
     fun isDefaultUmountModules(): Boolean
